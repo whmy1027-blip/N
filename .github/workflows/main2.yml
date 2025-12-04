@@ -1,0 +1,478 @@
+name: 🔥 Flet Only - Build All Platforms
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'main.py'
+      - 'requirements.txt'
+      - 'flet.json'
+      - 'assets/**'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - web
+        - android
+        - desktop
+
+env:
+  APP_NAME: "YST Downloader"
+  VERSION: 1.0.${{ github.run_number }}
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  build-web:
+    name: 🌐 Build Web App
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'all' || github.event.inputs.platform == 'web'
+    
+    steps:
+    - name: 📥 Checkout
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: 📦 Install Flet
+      run: |
+        pip install flet
+        flet --version
+    
+    - name: 🛠️ Build Web App
+      run: |
+        # إنشاء مجلد للويب
+        mkdir -p web_build
+        
+        # إنشاء index.html بسيط
+        cat > web_build/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${{ env.APP_NAME }}</title>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/flet/flet.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #0f172a;
+            color: white;
+            font-family: system-ui;
+        }
+        #app {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .loading {
+            text-align: center;
+            padding: 100px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="loading">
+            <h2>🚀 جاري تحميل ${{ env.APP_NAME }}...</h2>
+        </div>
+    </div>
+    <script type="module">
+        import { app } from 'https://cdn.jsdelivr.net/npm/flet/flet.js';
+        app("main.py", "app");
+    </script>
+</body>
+</html>
+EOF
+        
+        # نسخ main.py
+        cp main.py web_build/
+        
+        # نسخ assets إذا وجدت
+        [ -d "assets" ] && cp -r assets web_build/
+        
+        # إنشاء متطلبات للويب
+        echo "flet" > web_build/requirements.txt
+        
+        # ضغط
+        cd web_build
+        zip -r ../web-app.zip .
+    
+    - name: ⬆️ Upload Web Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: web-app
+        path: web-app.zip
+
+  build-android:
+    name: 📱 Build Android APK
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'all' || github.event.inputs.platform == 'android'
+    
+    steps:
+    - name: 📥 Checkout
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: 📦 Install Flet CLI
+      run: |
+        pip install flet-cli
+        flet --version
+    
+    - name: 🛠️ Create flet.json if not exists
+      run: |
+        if [ ! -f "flet.json" ]; then
+          cat > flet.json << 'EOF'
+{
+  "name": "${{ env.APP_NAME }}",
+  "description": "YouTube video downloader",
+  "version": "${{ env.VERSION }}",
+  "package_name": "com.yst.downloader",
+  "org_name": "YST",
+  "icon": "assets/icon.png",
+  "android": {
+    "min_sdk_version": 21,
+    "target_sdk_version": 34,
+    "permissions": [
+      "INTERNET",
+      "WRITE_EXTERNAL_STORAGE",
+      "READ_EXTERNAL_STORAGE"
+    ]
+  }
+}
+EOF
+        fi
+    
+    - name: 🏗️ Build APK
+      run: |
+        flet build apk \
+          --build-number ${{ github.run_number }} \
+          --verbose
+    
+    - name: 📝 Rename APK
+      run: |
+        # البحث عن APK وتسميتها
+        APK_FILE=$(find . -name "*.apk" -type f | head -1)
+        if [ -n "$APK_FILE" ]; then
+          mv "$APK_FILE" "yst-downloader-v${{ env.VERSION }}.apk"
+        else
+          # محاولة أخرى
+          find . -name "*.apk" -type f
+        fi
+    
+    - name: ⬆️ Upload Android Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-apk
+        path: |
+          yst-downloader-v${{ env.VERSION }}.apk
+          build/apk/*.apk
+
+  build-desktop:
+    name: 🖥️ Build Desktop Apps
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            platform: windows
+            ext: exe
+          - os: macos-latest
+            platform: mac
+            ext: app
+          - os: ubuntu-latest
+            platform: linux
+            ext: bin
+    
+    steps:
+    - name: 📥 Checkout
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: 📦 Install dependencies
+      run: |
+        pip install flet pyinstaller
+        pip install -r requirements.txt
+    
+    - name: 🛠️ Build Desktop App
+      run: |
+        if [ "${{ matrix.platform }}" = "windows" ]; then
+          # Windows
+          pyinstaller --onefile --windowed --name "YST_Downloader" main.py
+          cd dist
+          Compress-Archive -Path "YST_Downloader/*" -DestinationPath "yst-windows.zip"
+          
+        elif [ "${{ matrix.platform }}" = "mac" ]; then
+          # macOS
+          pyinstaller --onefile --windowed --name "YST_Downloader" main.py
+          hdiutil create -volname "YST Downloader" \
+            -srcfolder dist/YST_Downloader.app \
+            -ov -format UDZO dist/yst-mac.dmg
+            
+        else
+          # Linux
+          pyinstaller --onefile --name "yst-downloader" main.py
+          tar -czf dist/yst-linux.tar.gz -C dist yst-downloader
+        fi
+    
+    - name: ⬆️ Upload Desktop Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: desktop-${{ matrix.platform }}
+        path: dist/*.*
+
+  deploy:
+    name: 🚀 Deploy All
+    runs-on: ubuntu-latest
+    needs: [build-web, build-android, build-desktop]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: 📥 Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        pattern: '*'
+        merge-multiple: true
+    
+    - name: 📝 Create download page
+      run: |
+        cat > artifacts/index.html << 'EOF'
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${{ env.APP_NAME }} - التحميلات</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            color: white;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+        
+        h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            color: #fff;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+            margin-bottom: 30px;
+        }
+        
+        .platforms {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+        
+        .platform-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            transition: transform 0.3s, background 0.3s;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .platform-card:hover {
+            transform: translateY(-10px);
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        .platform-icon {
+            font-size: 3em;
+            margin-bottom: 20px;
+        }
+        
+        .platform-name {
+            font-size: 1.8em;
+            margin-bottom: 15px;
+            color: #64ffda;
+        }
+        
+        .platform-desc {
+            font-size: 0.95em;
+            opacity: 0.8;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
+        
+        .download-btn {
+            display: inline-block;
+            background: linear-gradient(to right, #00b4db, #0083b0);
+            color: white;
+            padding: 12px 30px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: all 0.3s;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+        }
+        
+        .download-btn:hover {
+            background: linear-gradient(to right, #0083b0, #00b4db);
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(0, 131, 176, 0.4);
+        }
+        
+        .build-info {
+            text-align: center;
+            margin-top: 50px;
+            padding: 20px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
+            font-size: 0.9em;
+        }
+        
+        @media (max-width: 768px) {
+            .platforms {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📥 ${{ env.APP_NAME }}</h1>
+            <p class="subtitle">حمّل تطبيقك المفضل على أي منصة تريدها</p>
+        </header>
+        
+        <div class="platforms">
+            <!-- Android -->
+            <div class="platform-card">
+                <div class="platform-icon">📱</div>
+                <h3 class="platform-name">Android</h3>
+                <p class="platform-desc">تطبيق Android كامل مع واجهة عربية</p>
+                <a href="yst-downloader-v${{ env.VERSION }}.apk" class="download-btn">تحميل APK</a>
+            </div>
+            
+            <!-- Web -->
+            <div class="platform-card">
+                <div class="platform-icon">🌐</div>
+                <h3 class="platform-name">Web</h3>
+                <p class="platform-desc">شغّل التطبيق مباشرة في متصفحك</p>
+                <a href="web-app.zip" class="download-btn">تحميل نسخة ويب</a>
+            </div>
+            
+            <!-- Windows -->
+            <div class="platform-card">
+                <div class="platform-icon">🪟</div>
+                <h3 class="platform-name">Windows</h3>
+                <p class="platform-desc">تطبيق Windows قابل للتنفيذ</p>
+                <a href="yst-windows.zip" class="download-btn">تحميل لـ Windows</a>
+            </div>
+            
+            <!-- macOS -->
+            <div class="platform-card">
+                <div class="platform-icon">🍎</div>
+                <h3 class="platform-name">macOS</h3>
+                <p class="platform-desc">تطبيق macOS سهل التثبيت</p>
+                <a href="yst-mac.dmg" class="download-btn">تحميل لـ macOS</a>
+            </div>
+            
+            <!-- Linux -->
+            <div class="platform-card">
+                <div class="platform-icon">🐧</div>
+                <h3 class="platform-name">Linux</h3>
+                <p class="platform-desc">تطبيق Linux ثنائي</p>
+                <a href="yst-linux.tar.gz" class="download-btn">تحميل لـ Linux</a>
+            </div>
+        </div>
+        
+        <div class="build-info">
+            <p>🔄 الإصدار: ${{ env.VERSION }} | 📅 تاريخ البناء: $(date '+%Y-%m-%d')</p>
+            <p>🔧 تم البناء باستخدام Flet فقط - بدون Kivy أو Buildozer</p>
+        </div>
+    </div>
+</body>
+</html>
+EOF
+    
+    - name: 🚀 Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: artifacts
+        keep_files: true
+
+  notify-success:
+    name: ✅ Build Successful
+    runs-on: ubuntu-latest
+    needs: [build-web, build-android, build-desktop]
+    if: success()
+    
+    steps:
+    - name: 📢 Notify
+      run: |
+        echo "🎉 البناء اكتمل بنجاح!"
+        echo ""
+        echo "📦 الملفات المتاحة للتحميل:"
+        echo "• 📱 Android: yst-downloader-v${{ env.VERSION }}.apk"
+        echo "• 🌐 Web: web-app.zip"
+        echo "• 🪟 Windows: yst-windows.zip"
+        echo "• 🍎 macOS: yst-mac.dmg"
+        echo "• 🐧 Linux: yst-linux.tar.gz"
+        echo ""
+        echo "🌍 صفحة التحميل: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+        echo ""
+        echo "🔧 تم استخدام Flet فقط - بدون Kivy!"
+
+  notify-failure:
+    name: ❌ Build Failed
+    runs-on: ubuntu-latest
+    if: failure()
+    
+    steps:
+    - name: 📢 Notify Failure
+      run: |
+        echo "❌ فشل البناء!"
+        echo "الرجاء التحقق من الأخطاء في logs"
